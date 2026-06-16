@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HL7 Formatter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --canvas: #eceff4;
+    --panel: #ffffff;
+    --ink: #18222f;
+    --ink-soft: #5a6677;
+    --hair: #d7dde6;
+    --hair-strong: #c2cad6;
+    --accent: #0b6e72;
+    --accent-press: #095457;
+    --sep: #b3bdcb;
+    --ok: #1f8a4c;
+    --warn: #b8730a;
+
+    /* segment category colours */
+    --c-control: #475569;
+    --c-patient: #4f46e5;
+    --c-visit:   #0e7490;
+    --c-order:   #15803d;
+    --c-dx:      #b4530a;
+    --c-ins:     #7c3aed;
+    --c-other:   #64748b;
+
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --display: "Space Grotesk", system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--display);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px 22px 40px;
+  }
+
+  /* ---- header ---- */
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 14px;
+    margin-bottom: 22px;
+  }
+  .title {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+  .title .pipe { color: var(--accent); }
+  .subtitle {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    letter-spacing: 0.01em;
+  }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+  .status b { color: var(--ink); font-weight: 600; }
+  .dot {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .dot::before {
+    content: "";
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: var(--hair-strong);
+  }
+  .dot.ok::before  { background: var(--ok); }
+  .dot.warn::before{ background: var(--warn); }
+
+  /* ---- panes ---- */
+  .panes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  .pane {
+    background: var(--panel);
+    border: 1px solid var(--hair);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    min-height: 420px;
+    overflow: hidden;
+  }
+  .pane-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--hair);
+  }
+  .pane-label {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .pane-actions { display: flex; gap: 8px; }
+
+  textarea {
+    flex: 1;
+    border: 0;
+    resize: none;
+    padding: 16px;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--ink);
+    background: transparent;
+    outline: none;
+    white-space: pre;
+    overflow: auto;
+  }
+  textarea::placeholder { color: #aeb7c4; }
+
+  .output {
+    flex: 1;
+    margin: 0;
+    padding: 16px;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.7;
+    overflow: auto;
+    white-space: pre;
+    tab-size: 2;
+  }
+  .empty-state {
+    color: #aeb7c4;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+
+  /* per-message block */
+  .msg + .msg { margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--hair-strong); }
+  .msg-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-bottom: 7px;
+  }
+  .msg-tag {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft);
+  }
+  .msg-copy { padding: 4px 11px; font-size: 11px; }
+  .msg-body { white-space: pre; }
+
+  /* a single rendered segment line */
+  .seg {
+    display: block;
+    padding-left: 10px;
+    border-left: 3px solid var(--c-other);
+  }
+  .seg .id { font-weight: 600; }
+  .seg .sep { color: var(--sep); }
+
+  .seg.control { border-color: var(--c-control); } .seg.control .id { color: var(--c-control); }
+  .seg.patient { border-color: var(--c-patient); } .seg.patient .id { color: var(--c-patient); }
+  .seg.visit   { border-color: var(--c-visit);   } .seg.visit .id   { color: var(--c-visit); }
+  .seg.order   { border-color: var(--c-order);   } .seg.order .id   { color: var(--c-order); }
+  .seg.dx      { border-color: var(--c-dx);      } .seg.dx .id      { color: var(--c-dx); }
+  .seg.ins     { border-color: var(--c-ins);     } .seg.ins .id     { color: var(--c-ins); }
+  .seg.other   { border-color: var(--c-other);   } .seg.other .id   { color: var(--c-other); }
+
+  /* boundary before a new message (a second+ MSH) */
+  .seg.msg-start {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--hair-strong);
+  }
+
+  /* ---- buttons ---- */
+  button {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 7px;
+    border: 1px solid var(--hair-strong);
+    background: #fff;
+    color: var(--ink);
+    padding: 7px 12px;
+    transition: background .14s ease, border-color .14s ease, transform .08s ease;
+  }
+  button:hover { border-color: var(--ink-soft); }
+  button:active { transform: translateY(1px); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .ghost { background: transparent; }
+  .copied { color: var(--ok); border-color: var(--ok); }
+
+  /* ---- action bar ---- */
+  .bar {
+    margin-top: 18px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    background: var(--panel);
+    border: 1px solid var(--hair);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .field {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex: 1;
+    min-width: 220px;
+  }
+  .field label {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .field input {
+    flex: 1;
+    min-width: 120px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink);
+    border: 1px solid var(--hair-strong);
+    border-radius: 7px;
+    padding: 7px 10px;
+    outline: none;
+    background: #fff;
+  }
+  .field input:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .format-btn {
+    font-family: var(--display);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: #fff;
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 11px 26px;
+  }
+  .format-btn:hover { background: var(--accent-press); border-color: var(--accent-press); }
+  .format-btn .kbd {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    opacity: .7;
+    margin-left: 9px;
+  }
+
+  /* ---- overrides ---- */
+  .overrides {
+    margin-top: 18px;
+    background: var(--panel);
+    border: 1px solid var(--hair);
+    border-radius: 10px;
+    padding: 14px 16px 16px;
+  }
+  .ov-head {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin-bottom: 12px;
+  }
+  .ov-head span { text-transform: none; letter-spacing: 0; font-weight: 400; opacity: .85; }
+  .ov-grid { display: flex; flex-direction: column; gap: 9px; }
+  .ov-row {
+    display: grid;
+    grid-template-columns: 132px 100px 1fr auto auto;
+    align-items: center;
+    gap: 10px;
+  }
+  .ov-enable {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+    cursor: pointer; user-select: none;
+  }
+  .ov-row input[type="text"] {
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+    border: 1px solid var(--hair-strong); border-radius: 6px;
+    padding: 6px 9px; outline: none; background: #fff; width: 100%;
+  }
+  .ov-row input[type="text"]:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
+  .ov-path { color: var(--ink-soft) !important; text-align: center; }
+  .ov-uniq {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-soft);
+    white-space: nowrap; cursor: pointer; user-select: none;
+  }
+  .ov-row button { padding: 6px 12px; }
+  input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+
+  /* ---- legend ---- */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    margin-top: 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-soft);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i {
+    width: 11px; height: 11px; border-radius: 3px; display: inline-block;
+  }
+
+  .note {
+    margin-top: 18px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--ink-soft);
+    max-width: 760px;
+  }
+
+  @media (max-width: 760px) {
+    .panes { grid-template-columns: 1fr; }
+    .pane { min-height: 280px; }
+    .format-btn { width: 100%; }
+    .ov-row { grid-template-columns: 1fr !important; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    button { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1 class="title">HL7 <span class="pipe">|</span> Formatter</h1>
+      <div class="subtitle">paste a one-line or mis-delimited message &rarr; one segment per line</div>
+    </div>
+    <div class="status">
+      <span class="dot" id="mshDot">MSH</span>
+      <span><b id="msgCount">0</b> messages</span>
+      <span><b id="segCount">0</b> segments</span>
+    </div>
+  </header>
+
+  <div class="panes">
+    <section class="pane">
+      <div class="pane-head">
+        <span class="pane-label">Input &mdash; raw</span>
+        <div class="pane-actions">
+          <button class="ghost" id="sampleBtn">Load sample</button>
+          <button class="ghost" id="clearBtn">Clear</button>
+        </div>
+      </div>
+      <textarea id="input" spellcheck="false" placeholder="Paste the HL7 message here…"></textarea>
+    </section>
+
+    <section class="pane">
+      <div class="pane-head">
+        <span class="pane-label">Output &mdash; formatted</span>
+        <div class="pane-actions">
+          <button class="ghost" id="copyBtn">Copy</button>
+          <button class="ghost" id="copyHapiBtn" title="Copy with \r segment terminators for HAPI">Copy for HAPI</button>
+        </div>
+      </div>
+      <div class="output" id="output"><span class="empty-state">Formatted message appears here.</span></div>
+    </section>
+  </div>
+
+  <div class="overrides">
+    <div class="ov-head">Overrides <span>&mdash; written into every message when you Format</span></div>
+    <div class="ov-grid" id="ovGrid"></div>
+  </div>
+
+  <div class="bar">
+    <div class="field">
+      <label for="extra">Extra segments</label>
+      <input id="extra" placeholder="Z-segments, comma-separated e.g. ZBE, ZPD" spellcheck="false" />
+    </div>
+    <button class="format-btn" id="formatBtn">Format<span class="kbd">⌘/Ctrl + ↵</span></button>
+  </div>
+
+  <div class="legend" id="legend"></div>
+
+  <p class="note">
+    Structural formatting only, in your browser &mdash; nothing is sent anywhere. It splits on
+    segment headers, so it also fixes segments joined by a stray space, not just clean
+    <span style="color:var(--accent)">\r</span> separators. Each message has its own <b>Copy</b>
+    (<span style="color:var(--accent)">\r</span>-terminated, ready to drop into the HAPI TestPanel one at a time).
+    Real schema validation is still HAPI's job.
+  </p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const STANDARD = [
+    "MSH","PID","PD1","NK1","PV1","PV2","EVN","ORC","OBR","OBX","NTE",
+    "AL1","DG1","GT1","IN1","IN2","IN3","MSA","ERR","SPM","QPD","RCP",
+    "ROL","PRB","PR1","ACC","UB1","UB2","RXA","RXR"
+  ];
+
+  const CATEGORY = {
+    control: ["MSH","EVN","MSA","ERR","QPD","RCP"],
+    patient: ["PID","PD1","NK1","GT1"],
+    visit:   ["PV1","PV2","ROL"],
+    order:   ["ORC","OBR","OBX","NTE","SPM","RXA","RXR"],
+    dx:      ["AL1","DG1","PRB","PR1","ACC"],
+    ins:     ["IN1","IN2","IN3","UB1","UB2"]
+  };
+  const CAT_LABEL = {
+    control: "control", patient: "patient", visit: "visit",
+    order: "orders / obs", dx: "allergy / dx", ins: "insurance", other: "other / Z"
+  };
+  function categoryOf(id) {
+    for (const c in CATEGORY) if (CATEGORY[c].indexOf(id) !== -1) return c;
+    return "other";
+  }
+
+  const SAMPLE =
+    "MSH|^~\\&|Epic|00001|Robin|JHAH|20260609075653||ADT^A08|121691263|P|2.5\r" +
+    "EVN|A08|20260609075653\r" +
+    "PID|||378595||ALAJMI^FAISAL^MASOUD~\u0627\u0644\u0639\u062c\u0645\u064a^\u0641\u064a\u0635\u0644^\u0645\u0633\u0639\u0648\u062f||19930606|M|||||055 508 3226^P^CP^^^055^5083226||ENG|2||9060716362|1076883790|||||||||SA\r" +
+    "PV1|1|SA|^Periop^1421|3|||3062^ABU-SHAMMA^USAMAH|||100002042|||||||3062^ABU-SHAMMA^USAMAH||9060716362|||||||||||||||||||||||||20260609070500\r" +
+    "PV2||||||||20260609084600\r" +
+    "OBX|1|NM|DBP^BloodPressure^BP|1|76|mmHg|||||F|||20260609072000\r" +
+    "OBX|2|NA|SpO2^Oxygen Saturation^SpO2|2|99|SpO2|||||F|||20260609072000\r" +
+    "OBX|7|NM|HT^HEIGHT||164|cm||||||||20260609072000\r" +
+    "AL1||Drug Class|^NO KNOWN ALLERGIES DG1|||J38.3^Other diseases of vocal cords^I10AM|||F\r" +
+    "DG1|||^Vocal cord mass [J38.3]|||F DG1|||J38.3^Other diseases of vocal cords^I10AM||20260511153728|18430;EPT\r" +
+    "IN1||ARAMCO^ARAMCO ACTIVE JHAH DH~303013^ARAMCO ACTIVE JHAH DH^PLANID||ARAMCO ACTIVE||||303013||||20210817||||ALAJMI^FAISAL|Self|19930606||Accept";
+
+  function parseExtra() {
+    return document.getElementById("extra").value
+      .split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+  }
+
+  function normalize(raw, extra) {
+    if (!raw) return "";
+    const segs = STANDARD.concat(extra || []);
+    const alt = segs.join("|");
+    const re = new RegExp("(?<=.)(?=(?:" + alt + ")\\|)", "g");
+    let flat = raw.replace(/\uFEFF/g, "").replace(/[\r\n]+/g, " ").trim();
+    let split = flat.replace(re, "\n");
+    return split.replace(/[ \t]+(?=\n)/g, "").replace(/[ \t]+$/g, "");
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // render one segment line with a colour-coded id and dimmed separators
+  function renderLine(line, index) {
+    const id = line.slice(0, 3);
+    const known = STANDARD.indexOf(id) !== -1 || parseExtra().indexOf(id) !== -1;
+    const cat = known ? categoryOf(id) : "other";
+    const body = escapeHtml(line).replace(/\|/g, '<span class="sep">|</span>');
+    let html;
+    if (known) {
+      const rest = body.slice(escapeHtml(id).length);
+      html = '<span class="id">' + escapeHtml(id) + "</span>" + rest;
+    } else {
+      html = body;
+    }
+    const boundary = (index > 0 && id === "MSH") ? " msg-start" : "";
+    return '<span class="seg ' + cat + boundary + '">' + html + "</span>";
+  }
+
+  // ---- identifier overrides ----
+  const OV = [
+    { k: "mrn",   label: "MRN",         path: "PID-3",       uniq: false },
+    { k: "csn",   label: "Visit / CSN", path: "PV1-19,PID-18", uniq: false },
+    { k: "msgid", label: "Message ID",  path: "MSH-10",      uniq: true, keepText: true },
+    { k: "order", label: "Order ID",    path: "ORC-2,OBR-2", uniq: true  }
+  ];
+
+  function genId() {
+    return Date.now().toString().slice(-7) + Math.floor(100 + Math.random() * 900);
+  }
+
+  function buildOverrides() {
+    const grid = document.getElementById("ovGrid");
+    grid.innerHTML = OV.map(function (o) {
+      return "" +
+        '<div class="ov-row">' +
+          '<label class="ov-enable"><input type="checkbox" data-en="' + o.k + '"> ' + o.label + "</label>" +
+          '<input type="text" class="ov-path" data-path="' + o.k + '" value="' + o.path + '" spellcheck="false" title="HL7 field(s), comma-separated">' +
+          '<input type="text" class="ov-val" data-val="' + o.k + '" placeholder="value" spellcheck="false">' +
+          '<button class="ghost ov-auto" data-auto="' + o.k + '">Auto</button>' +
+          '<label class="ov-uniq"><input type="checkbox" data-uniq="' + o.k + '"' + (o.uniq ? " checked" : "") + "> per&nbsp;msg</label>" +
+        "</div>";
+    }).join("");
+
+    grid.querySelectorAll(".ov-auto").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const k = btn.getAttribute("data-auto");
+        grid.querySelector('[data-val="' + k + '"]').value = genId();
+        grid.querySelector('[data-en="' + k + '"]').checked = true;
+        format();
+      });
+    });
+  }
+
+  function parsePaths(s) {
+    return s.split(",").map(function (x) { return x.trim().toUpperCase(); })
+      .filter(Boolean)
+      .map(function (p) {
+        const m = p.match(/^([A-Z][A-Z0-9]{2})-(\d+)$/);
+        return m ? { seg: m[1], field: parseInt(m[2], 10) } : null;
+      })
+      .filter(Boolean);
+  }
+
+  function readOverrides() {
+    const grid = document.getElementById("ovGrid");
+    return OV.map(function (o) {
+      return {
+        enabled: grid.querySelector('[data-en="' + o.k + '"]').checked,
+        value:   grid.querySelector('[data-val="' + o.k + '"]').value.trim(),
+        uniq:    grid.querySelector('[data-uniq="' + o.k + '"]').checked,
+        keepText: !!o.keepText,
+        targets: parsePaths(grid.querySelector('[data-path="' + o.k + '"]').value)
+      };
+    }).filter(function (o) { return o.enabled && o.value !== "" && o.targets.length; });
+  }
+
+  function fieldIndex(seg, n) { return seg === "MSH" ? n - 1 : n; }
+
+  // when keepText: replace only the numeric run, keep any surrounding text
+  // e.g. mergeKeepText("106796ANC", "555") -> "555ANC"
+  function mergeKeepText(original, value) {
+    const m = original.match(/^(\D*)(\d+)(\D*)$/);
+    return m ? (m[1] + value + m[3]) : value;
+  }
+
+  function setField(line, seg, n, value, keepText) {
+    const parts = line.split("|");
+    const idx = fieldIndex(seg, n);
+    if (idx <= 0) return line;
+    while (parts.length <= idx) parts.push("");
+    const comps = parts[idx].split("^");
+    comps[0] = keepText ? mergeKeepText(comps[0], value) : value;  // first component
+    parts[idx] = comps.join("^");
+    return parts.join("|");
+  }
+
+  function applyOverrides(text) {
+    if (!text) return text;
+    const active = readOverrides();
+    if (!active.length) return text;
+    let msgIndex = 0;
+    return text.split("\n").map(function (line) {
+      const id = line.slice(0, 3);
+      if (id === "MSH") msgIndex++;
+      active.forEach(function (o) {
+        o.targets.forEach(function (t) {
+          if (t.seg === id) {
+            const v = o.uniq ? (o.value + "-" + msgIndex) : o.value;
+            line = setField(line, t.seg, t.field, v, o.keepText);
+          }
+        });
+      });
+      return line;
+    }).join("\n");
+  }
+
+  let lastReadable = "";
+  let lastPlain = "";
+  let messagesRaw = [];
+
+  function format() {
+    const raw = document.getElementById("input").value;
+    const text = applyOverrides(normalize(raw, parseExtra()));   // split, then apply id overrides
+    lastPlain = text;
+    // human / copy form: a blank line before each new message (each MSH)
+    lastReadable = text.replace(/\n(?=MSH\|)/g, "\n\n");
+    const out = document.getElementById("output");
+
+    if (!text) {
+      out.innerHTML = '<span class="empty-state">Formatted message appears here.</span>';
+      document.getElementById("segCount").textContent = "0";
+      document.getElementById("msgCount").textContent = "0";
+      setMsh(false);
+      return;
+    }
+    const lines = text.split("\n");
+
+    // group segments into messages — each MSH starts a new one
+    const groups = [];
+    lines.forEach(function (line) {
+      const id = line.slice(0, 3);
+      if (id === "MSH" || groups.length === 0) groups.push([]);
+      groups[groups.length - 1].push(line);
+    });
+    messagesRaw = groups.map(function (g) { return g.join("\n"); });
+
+    out.innerHTML = groups.map(function (g, gi) {
+      const body = g.map(function (l) { return renderLine(l); }).join("\n");
+      return '<div class="msg">' +
+               '<div class="msg-bar">' +
+                 '<span class="msg-tag">Message ' + (gi + 1) + '</span>' +
+                 '<button class="ghost msg-copy" data-mi="' + gi + '" title="Copy this message, \\r-terminated for HAPI">Copy</button>' +
+               '</div>' +
+               '<div class="msg-body">' + body + '</div>' +
+             '</div>';
+    }).join("");
+
+    out.querySelectorAll(".msg-copy").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const i = parseInt(btn.getAttribute("data-mi"), 10);
+        copy(messagesRaw[i].replace(/\n/g, "\r"), btn);
+      });
+    });
+
+    document.getElementById("segCount").textContent = String(lines.length);
+    document.getElementById("msgCount").textContent = String(groups.length);
+    setMsh(lines.length > 0 && lines[0].slice(0, 3) === "MSH");
+  }
+
+  function setMsh(ok) {
+    const dot = document.getElementById("mshDot");
+    dot.className = "dot " + (ok ? "ok" : "warn");
+    dot.textContent = ok ? "MSH" : "no MSH";
+  }
+
+  function flash(btn, label) {
+    const original = btn.textContent;
+    btn.textContent = label;
+    btn.classList.add("copied");
+    setTimeout(() => { btn.textContent = original; btn.classList.remove("copied"); }, 1100);
+  }
+
+  async function copy(text, btn) {
+    try {
+      await navigator.clipboard.writeText(text);
+      flash(btn, "Copied");
+    } catch (e) {
+      const ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); flash(btn, "Copied"); }
+      finally { document.body.removeChild(ta); }
+    }
+  }
+
+  function buildLegend() {
+    const el = document.getElementById("legend");
+    const order = ["control","patient","visit","order","dx","ins","other"];
+    el.innerHTML = order.map(c =>
+      '<span><i style="background:var(--c-' + (c === "order" ? "order" : c === "ins" ? "ins" : c) +
+      ')"></i>' + CAT_LABEL[c] + "</span>"
+    ).join("");
+  }
+
+  // wiring
+  document.getElementById("formatBtn").addEventListener("click", format);
+  document.getElementById("clearBtn").addEventListener("click", function () {
+    document.getElementById("input").value = "";
+    format();
+    document.getElementById("input").focus();
+  });
+  document.getElementById("sampleBtn").addEventListener("click", function () {
+    document.getElementById("input").value = SAMPLE;
+    format();
+  });
+  document.getElementById("copyBtn").addEventListener("click", function () {
+    if (lastReadable) copy(lastReadable, this);
+  });
+  document.getElementById("copyHapiBtn").addEventListener("click", function () {
+    if (lastPlain) copy(lastPlain.replace(/\n/g, "\r"), this);
+  });
+  document.addEventListener("keydown", function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); format(); }
+  });
+
+  buildLegend();
+  buildOverrides();
+})();
+</script>
+</body>
+</html>
